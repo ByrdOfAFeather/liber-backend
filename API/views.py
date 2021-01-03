@@ -31,7 +31,7 @@ class NamedEntityEndpoint(APIView):
 		raise NotImplementedError
 
 	def get(self, request, format=None):
-		if pagination_index := request.query_params.get("pagination_index", ""):
+		if pagination_index := request.query_params.get("pagination_index", False):
 			end_of_pagination = False
 			try:
 				pagination_index = int(pagination_index)
@@ -44,21 +44,42 @@ class NamedEntityEndpoint(APIView):
 			paginated_objects = [self.jsonify_model(i) for i in all_objects[pagination_index: pagination_index + 10]]
 			return Response({"result": paginated_objects, "end_of_pagination": end_of_pagination},
 			                status=200)
-		elif name := request.query_params.get("name", ""):
-			if name:
-				try:
-					valid_objects = self.related_model.objects.get(
-						name=name
-					)
-					return Response(self.jsonify_model(valid_objects), status=200)
-				except self.related_model.DoesNotExist:
-					return Response({
-						"error": "No object found",
-					}, status=404)
+		elif name := request.query_params.get("name", False):
+			"""
+			Searches the database for an exact match first. If this is found, the resulting response will indicate 
+			that there is an exact match in the first index. Then the database is search for .startswith. this will 
+			consist of the rest of the list. If nothing is found a 404 will be returned, if anything is found a 200 
+			will be returned along with the objects found. 
+			"""
+			exact_match = None
+			try:
+				exact_match = self.jsonify_model(self.related_model.objects.get(
+					name=name
+				))
+			except self.related_model.DoesNotExist:
+				exact_match = None
+			valid_objects = []
+			if exact_match:
+				valid_objects.append(exact_match)
+			valid_objects.extend(
+				[self.jsonify_model(obj) for obj in self.related_model.objects.filter(
+					name__startswith=name
+				)]
+			)
+			if valid_objects:
+				return Response({"results": valid_objects, "exact_match": exact_match is not None}, status=200)
 			else:
-				return Response({"error": "Must specify name to search by"}, status=400)
+				return Response({"error": "No objects found", "exact_match": False}, status=404)
+		elif olid := request.query_params.get("olid", False):
+			try:
+				found_object = self.related_model.objects.get(
+					olid=olid
+				)
+				return Response({"results": self.jsonify_model(found_object), "exact_match": True}, status=200)
+			except self.related_model.DoesNotExist:
+				return Response({"error": "Could not find a model", "exact_match": True}, status=404)
 		else:
-			return Response({"error": "Bad request"}, status=400)
+			return Response({"error": "Bad request", "exact_match": False}, status=400)
 
 	def post(self, request, format=None):
 		name = request.data.get("name", "")
@@ -102,16 +123,33 @@ class AuthorEndpoint(NamedEntityEndpoint):
 		self.related_model = Author
 
 	def jsonify_model(self, model_instance):
+		"""Note that id here is OLID, not the database id as is the case with publishers
+		"""
 		return {
 			"name": model_instance.name,
 			# "nationality": model_instance.nationality,
 			# "bio": model_instance.bio,
-			"id": model_instance.id
+			"id": model_instance.olid
 		}
 
 	def get(self, request, format=None):
 		return super(AuthorEndpoint, self).get(request, format=format)
 
 	def post(self, request, format=None):
-		return super(AuthorEndpoint, self).post(request, format=format)
-
+		name = request.data.get("name", "")
+		olid = request.data.get("olid", None)
+		if name and olid:
+			try:
+				new_object = self.related_model.objects.create(
+					name=name,
+					olid=olid
+				)
+				return Response(self.jsonify_model(new_object), status=200)
+			except IntegrityError:
+				return Response({
+					"error": "An object with this name already exists"
+				}, status=403)
+		else:
+			return Response({
+				"error": "Must provide a name"
+			}, status=403)

@@ -4,7 +4,6 @@ from API import views
 
 app_name = "api"
 urlpatterns = [
-	path('publisher', views.PublisherEndpoint.as_view(), name="publisher"),   # Used for publisher pagination
-	# path('publisher/<int:publisher_id>', views.publishers, name="publisher"),    # Used for action on a single publisher
-	# path('search', name="search"),
+	path('publisher', views.PublisherEndpoint.as_view(), name="publisher"),
+	path('author', views.AuthorEndpoint.as_view(), name="author")
 ]
