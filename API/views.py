@@ -8,7 +8,11 @@ from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from Library.models import Publisher, Author
+from Library.models import Publisher, Author, Book, BookToAuthor, BookToPublisher
+import io
+from rest_framework.parsers import JSONParser
+
+from API.seralizers import BookSearlizer
 
 
 @api_view(["POST"])
@@ -153,3 +157,57 @@ class AuthorEndpoint(NamedEntityEndpoint):
 			return Response({
 				"error": "Must provide a name"
 			}, status=403)
+
+
+class BookEndpoint(APIView):
+	def post(self, request, format=None):
+		seralizer = BookSearlizer(data=request.data)
+		if seralizer.is_valid():
+			try:
+				new_book = Book.objects.create(
+					title=seralizer.data.get("title"),
+					isbn_number=seralizer.data.get("isbn"),
+					publish_date=seralizer.data.get("publish_date"),
+					spine_type=seralizer.data.get("physical_format"),
+				)
+				for author_data in seralizer.data.get("authors"):
+					author = None
+					try:
+						author = Author.objects.get(
+							olid=author_data["id"]
+						)
+					except Author.DoesNotExist:
+						author = Author.objects.create(
+							name=author_data["name"],
+							olid=author_data["id"]
+						)
+					BookToAuthor.objects.create(
+						book=new_book,
+						author=author
+					)
+				for publisher_data in seralizer.data.get("publishers"):
+					publisher = None
+					try:
+						publisher = Publisher.objects.get(
+							id=publisher_data["id"]
+						)
+					except Publisher.DoesNotExist:
+						publisher = Publisher.objects.create(
+							name=publisher_data["name"],
+							id=publisher_data["id"]
+						)
+					BookToPublisher.objects.create(
+						book=new_book,
+						publisher=publisher
+					)
+				return Response(
+					{"success": "book created."},
+					status=200
+				)
+			except IntegrityError as e:
+				return Response({"error": "Book already exists"}, status=403)
+		else:
+			return Response(
+				seralizer.errors,
+				status=403
+			)
